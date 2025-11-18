@@ -1,7 +1,7 @@
 from rest_framework import generics
 from rest_framework.response import Response
 #from django.contrib.auth.models import User
-from .serializers import RegistrationSerializer, UserSerializer, LoginSerializer
+from .serializers import RegistrationSerializer, LoginSerializer,UserProfileSerializer,ChangePasswordSerializer
 from rest_framework import permissions
 import uuid
 from rest_framework import status, serializers
@@ -14,22 +14,18 @@ User = get_user_model()
 
 class RegistrationAPIView(generics.GenericAPIView):
     serializer_class = RegistrationSerializer
+    permission_classes = [permissions.AllowAny]
     
     def post(self, request):
         serializer = self.get_serializer(data=request.data)
         # serializer.is_valid(raise_exception=True)
         # serializer.save()
         if  (serializer.is_valid()):
-            serializer.save()
-            username = request.data.get('username')
-            try:
-                user = User.objects.get(username=username)
-            except User.DoesNotExist:
-                return Response({
-                    "error" : "User Not found"
-                },status = status.HTTP_404_NOT_FOUND)
+            user = serializer.save()
+
             refresh = RefreshToken.for_user(user)
             access = str(refresh.access_token)
+            
             return Response({
                 "RequestId": str(uuid.uuid4()),
                 "message" : "User created successfully",
@@ -38,7 +34,7 @@ class RegistrationAPIView(generics.GenericAPIView):
                 "refresh": str(refresh),
             }, status=status.HTTP_201_CREATED)
         return Response({
-            "errors" : serializer.errors, 
+            "error" : serializer.errors, 
         }, status=status.HTTP_400_BAD_REQUEST)
 
 class LoginAPIView(generics.GenericAPIView):
@@ -69,21 +65,30 @@ class LoginAPIView(generics.GenericAPIView):
             "error" : serializer.errors,
         }, status = status.HTTP_400_BAD_REQUEST)
 
-
-class TestTokenView(APIView):
+class UserProfileAPIView(generics.RetrieveUpdateAPIView):
+    serializer_class = UserProfileSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    def get_object(self):
+        return self.request.user
+    
+class ChangePasswordAPIView(generics.UpdateAPIView):
+    serializer_class = ChangePasswordSerializer
     permission_classes = [permissions.IsAuthenticated]
     
-    def get(self, request, user_id):
-        user = get_object_or_404(
-            User, id=user_id
-        )
-        print(user)
-        email = user.email
-        #email = User.objects.get(email=email)
+    def update(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
         
-        return Response({
-            "message": "You have access to this view",
-            "email" : email,
-        }, status=status.HTTP_200_OK)
-    
+        user = self.request.user
+        if not user.check_password(serializer.validated_data['old_password']):
+            return Response(
+                {"error": "Wrong old password"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+      
+        user.set_password(serializer.validated_data['new_password'])
+        user.save()
+        
+        return Response({"message": "Password updated successfully"}) 
+  
 
