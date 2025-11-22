@@ -28,9 +28,6 @@ class CategoryViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=['get'])
     def without_expenses(self, request):
-        """
-        Custom endpoint to get categories with no expenses
-        """
         categories = self.get_queryset().filter(expenses__isnull=True)
         serializer = self.get_serializer(categories, many=True)
         return Response(serializer.data)
