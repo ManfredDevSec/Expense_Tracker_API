@@ -1,19 +1,21 @@
+import logging
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import OrderingFilter
-from django.db.models import Sum, Avg, Count, Min, Max, Q
+from django.db.models import Q, Sum, Avg, Count, Min, Max
 from django.utils import timezone
-from datetime import timedelta, datetime
-import calendar
+from datetime import timedelta
 from .models import Expense
-from categories.models import Category
-from django.db import models
 from .serializers import ExpenseSerializer
 from .permissions import IsExpenseOwner
 from .filters import ExpenseFilter
+from categories.models import Category
+
+
+logger = logging.getLogger('django')
 
 class ExpenseViewSet(viewsets.ModelViewSet):
     serializer_class = ExpenseSerializer
@@ -30,24 +32,31 @@ class ExpenseViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
+        logger.info(f"User {self.request.user.username} created expense: {serializer.instance.amount}")
+    
+    def destroy(self, request, *args, **kwargs):
+        expense = self.get_object()
+        
+        logger.info(f"User {request.user.username} deleted expense: {expense.amount}")
+        return super().destroy(request, *args, **kwargs)
     
     @action(detail=False, methods=['get'])
     def filter_options(self, request):
-
         user_categories = Category.objects.filter(user=request.user)
         category_options = [{'id': cat.id, 'name': cat.name} for cat in user_categories]
         
-
         date_range = Expense.objects.filter(user=request.user).aggregate(
-            min_date=models.Min('date'),
-            max_date=models.Max('date')
+            min_date=Min('date'),
+            max_date=Max('date')
+        )
+        
+        amount_range = Expense.objects.filter(user=request.user).aggregate(
+            min_amount=Min('amount'),
+            max_amount=Max('amount')
         )
         
 
-        amount_range = Expense.objects.filter(user=request.user).aggregate(
-            min_amount=models.Min('amount'),
-            max_amount=models.Max('amount')
-        )
+        logger.info(f"User {request.user.username} requested filter options")
         
         return Response({
             'categories': category_options,
@@ -57,7 +66,6 @@ class ExpenseViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def summary(self, request):
-
         queryset = self.filter_queryset(self.get_queryset())
 
         stats = queryset.aggregate(
@@ -68,7 +76,6 @@ class ExpenseViewSet(viewsets.ModelViewSet):
             lowest=Min('amount')
         )
         
-        
         category_breakdown = queryset.values(
             'category__id', 'category__name'
         ).annotate(
@@ -76,7 +83,6 @@ class ExpenseViewSet(viewsets.ModelViewSet):
             count=Count('id'),
             average=Avg('amount')
         ).order_by('-total')
-        
         
         monthly_breakdown = []
         today = timezone.now().date()
@@ -86,7 +92,6 @@ class ExpenseViewSet(viewsets.ModelViewSet):
             year = month_date.year
             month = month_date.month
             
-            
             month_expenses = queryset.filter(
                 date__year=year,
                 date__month=month
@@ -95,7 +100,7 @@ class ExpenseViewSet(viewsets.ModelViewSet):
                 count=Count('id')
             )
             
-            if month_expenses['total'] is not None:  
+            if month_expenses['total'] is not None:
                 monthly_breakdown.append({
                     'year': year,
                     'month': month,
@@ -104,8 +109,9 @@ class ExpenseViewSet(viewsets.ModelViewSet):
                     'count': month_expenses['count']
                 })
         
-        
         monthly_breakdown.reverse()
+
+        logger.info(f"User {request.user.username} generated summary - Total: {stats['total']}")
         
         return Response({
             'summary': stats,
@@ -116,26 +122,25 @@ class ExpenseViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def search(self, request):
-        """
-        Advanced search endpoint
-        """
         query = request.query_params.get('q', '')
         if not query:
             return Response({'error': 'Search query parameter "q" is required'}, 
                           status=status.HTTP_400_BAD_REQUEST)
-        
         
         queryset = self.get_queryset().filter(
             Q(description__icontains=query) |
             Q(category__name__icontains=query)
         )
         
-        
         queryset = self.filter_queryset(queryset)
         
         serializer = self.get_serializer(queryset, many=True)
+        
+        logger.info(f"User {request.user.username} searched for '{query}' - Found {queryset.count()} results")
+        
         return Response({
             'query': query,
             'results': serializer.data,
             'count': queryset.count()
-        })
+        })      
+        
