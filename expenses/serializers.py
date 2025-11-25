@@ -1,10 +1,6 @@
 from rest_framework import serializers
-from django.contrib.auth import get_user_model
 from .models import Expense
 from categories.models import Category
-User = get_user_model()
-
-
 
 class ExpenseSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source='category.name', read_only=True)
@@ -18,11 +14,23 @@ class ExpenseSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'user', 'created_at', 'updated_at', 'category_name']
     
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            self.fields['category'].queryset = Category.objects.filter(user=request.user)
+    
     def validate_amount(self, value):
         if value <= 0:
             raise serializers.ValidationError("Amount must be greater than zero.")
         return value
-        
+    
+    def validate_date(self, value):
+        from django.utils import timezone
+        if value > timezone.now().date():
+            raise serializers.ValidationError("Expense date cannot be in the future.")
+        return value
+    
     def validate_category(self, value):
         request = self.context.get('request')
         if request and request.user.is_authenticated:
